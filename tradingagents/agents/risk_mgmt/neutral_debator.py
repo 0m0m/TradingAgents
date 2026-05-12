@@ -1,3 +1,4 @@
+from tradingagents.agents.utils.agent_utils import get_language_instruction
 
 
 from tradingagents.agents.utils.agent_utils import get_language_instruction
