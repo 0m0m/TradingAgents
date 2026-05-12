@@ -11,7 +11,8 @@ import pytest
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from tradingagents.llm_clients.openai_client import MinimaxChatOpenAI
+from tradingagents.llm_clients.capabilities import is_minimax_reasoning_model
+from tradingagents.llm_clients.openai_client import MinimaxChatOpenAI, OpenAIClient
 
 
 def _client(model: str = "MiniMax-M2.7"):
@@ -71,3 +72,31 @@ class TestMinimaxStructuredOutputDispatch:
         assert any(
             t.get("function", {}).get("name") == "_Pick" for t in tools
         ), f"schema not bound: {tools}"
+
+
+@pytest.mark.unit
+class TestMinimaxModelDetection:
+    def test_known_m2_model_is_minimax_reasoning_model(self):
+        assert is_minimax_reasoning_model("MiniMax-M2.7") is True
+
+    def test_future_m_series_model_is_minimax_reasoning_model(self):
+        assert is_minimax_reasoning_model("MiniMax-M3") is True
+
+    def test_openai_model_is_not_minimax_reasoning_model(self):
+        assert is_minimax_reasoning_model("gpt-5.5") is False
+
+
+@pytest.mark.unit
+class TestMinimaxClientSelection:
+    def test_openai_provider_with_minimax_model_injects_reasoning_split(self):
+        client = OpenAIClient(
+            model="MiniMax-M2.7",
+            provider="openai",
+            api_key="placeholder",
+        )
+
+        llm = client.get_llm()
+        payload = llm._get_request_payload([HumanMessage(content="hi")])
+
+        assert isinstance(llm, MinimaxChatOpenAI)
+        assert payload.get("reasoning_split") is True

@@ -7,7 +7,7 @@ from langchain_openai import ChatOpenAI
 
 from .api_key_env import get_api_key_env
 from .base_client import BaseLLMClient, normalize_content
-from .capabilities import get_capabilities
+from .capabilities import get_capabilities, is_minimax_reasoning_model
 from .validators import validate_model
 
 
@@ -236,10 +236,11 @@ class OpenAIClient(BaseLLMClient):
 
         model_lower = self.model.lower()
         is_deepseek_model = model_lower == "deepseek" or model_lower.startswith("deepseek-")
+        is_minimax_model = is_minimax_reasoning_model(self.model)
 
         if self.provider == "deepseek" or is_deepseek_model:
             chat_cls = DeepSeekChatOpenAI
-        elif self.provider in ("minimax", "minimax-cn"):
+        elif self.provider in ("minimax", "minimax-cn") or is_minimax_model:
             chat_cls = MinimaxChatOpenAI
         else:
             chat_cls = NormalizedChatOpenAI

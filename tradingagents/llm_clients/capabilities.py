@@ -118,3 +118,7 @@ def get_capabilities(model_name: str) -> ModelCapabilities:
         if pattern.match(model_name):
             return caps
     return _DEFAULT
+
+
+def is_minimax_reasoning_model(model_name: str) -> bool:
+    return get_capabilities(model_name) == _MINIMAX_THINKING
