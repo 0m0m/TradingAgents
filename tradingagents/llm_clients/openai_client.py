@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any, Optional
 
@@ -6,6 +7,9 @@ from langchain_openai import ChatOpenAI
 
 from .base_client import BaseLLMClient, normalize_content
 from .validators import validate_model
+
+
+logger = logging.getLogger(__name__)
 
 
 class NormalizedChatOpenAI(ChatOpenAI):
@@ -60,10 +64,10 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
        fails with HTTP 400. ``_create_chat_result`` captures the field on
        receive and ``_get_request_payload`` re-attaches it on send.
 
-    2. **deepseek-reasoner has no tool_choice.** Structured output via
-       function-calling is unavailable, so we raise NotImplementedError
-       and let the agent factories fall back to free-text generation
-       (see ``tradingagents/agents/utils/structured.py``).
+    2. **deepseek-reasoner has no tool_choice.** Tool binding and
+       structured output via function-calling are unavailable, so we skip
+       tool binding and raise NotImplementedError for structured output.
+       Callers then naturally fall back to plain-text generation.
     """
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
@@ -94,8 +98,22 @@ class DeepSeekChatOpenAI(NormalizedChatOpenAI):
                 generation.message.additional_kwargs["reasoning_content"] = reasoning
         return chat_result
 
+    def _is_reasoner_model(self) -> bool:
+        model_name = str(getattr(self, "model_name", "") or getattr(self, "model", "")).lower()
+        # Some gateways expose variants like deepseek-reasoner-xxxx.
+        return "reasoner" in model_name
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        if self._is_reasoner_model():
+            logger.warning(
+                "deepseek reasoner model does not support tool_choice/tools; "
+                "skipping bind_tools and using plain-text generation."
+            )
+            return self
+        return super().bind_tools(tools, tool_choice=tool_choice, **kwargs)
+
     def with_structured_output(self, schema, *, method=None, **kwargs):
-        if self.model_name == "deepseek-reasoner":
+        if self._is_reasoner_model():
             raise NotImplementedError(
                 "deepseek-reasoner does not support tool_choice; structured "
                 "output is unavailable. Agent factories fall back to "
@@ -164,14 +182,25 @@ class OpenAIClient(BaseLLMClient):
             if key in self.kwargs:
                 llm_kwargs[key] = self.kwargs[key]
 
-        # Native OpenAI: use Responses API for consistent behavior across
-        # all model families. Third-party providers use Chat Completions.
+        # Native OpenAI: default to Responses API for GPT-4.1/GPT-5 families.
+        # Some OpenAI-compatible gateways/custom model IDs only implement
+        # /v1/chat/completions; forcing Responses API there causes 500
+        # convert_request_failed/not implemented.
         if self.provider == "openai":
-            llm_kwargs["use_responses_api"] = True
+            model_lower = self.model.lower()
+            use_responses = model_lower.startswith("gpt-5") or model_lower.startswith("gpt-4.1")
+            llm_kwargs["use_responses_api"] = use_responses
 
-        # DeepSeek's thinking-mode quirks live in their own subclass so the
-        # base NormalizedChatOpenAI stays free of provider-specific branches.
-        chat_cls = DeepSeekChatOpenAI if self.provider == "deepseek" else NormalizedChatOpenAI
+        # DeepSeek quirks should apply both when provider=deepseek and when
+        # users route DeepSeek models through an OpenAI-compatible gateway
+        # (provider=openai with model id like deepseek-* / deepseek).
+        model_lower = self.model.lower()
+        is_deepseek_model = model_lower == "deepseek" or model_lower.startswith("deepseek-")
+        chat_cls = (
+            DeepSeekChatOpenAI
+            if self.provider == "deepseek" or is_deepseek_model
+            else NormalizedChatOpenAI
+        )
         return chat_cls(**llm_kwargs)
 
     def validate_model(self) -> bool:

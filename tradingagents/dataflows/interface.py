@@ -1,3 +1,4 @@
+import os
 from typing import Annotated
 
 # Import from vendor-specific modules
@@ -11,6 +12,7 @@ from .y_finance import (
     get_insider_transactions as get_yfinance_insider_transactions,
 )
 from .yfinance_news import get_news_yfinance, get_global_news_yfinance
+from .opencli_cn_news import get_opencli_cn_news, get_opencli_cn_global_news
 from .alpha_vantage import (
     get_stock as get_alpha_vantage_stock,
     get_indicator as get_alpha_vantage_indicator,
@@ -23,6 +25,7 @@ from .alpha_vantage import (
     get_global_news as get_alpha_vantage_global_news,
 )
 from .alpha_vantage_common import AlphaVantageRateLimitError
+from .cache import load_cached_vendor_result, save_cached_vendor_result
 
 # Configuration and routing logic
 from .config import get_config
@@ -61,6 +64,7 @@ TOOLS_CATEGORIES = {
 }
 
 VENDOR_LIST = [
+    "opencli_cn",
     "yfinance",
     "alpha_vantage",
 ]
@@ -96,10 +100,12 @@ VENDOR_METHODS = {
     },
     # news_data
     "get_news": {
+        "opencli_cn": get_opencli_cn_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
     },
     "get_global_news": {
+        "opencli_cn": get_opencli_cn_global_news,
         "yfinance": get_global_news_yfinance,
         "alpha_vantage": get_alpha_vantage_global_news,
     },
@@ -147,16 +153,63 @@ def route_to_vendor(method: str, *args, **kwargs):
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
+    last_error = None
+
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
+
+        cached = load_cached_vendor_result(method, vendor, args, kwargs)
+        if cached is not None:
+            return cached
 
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
 
         try:
-            return impl_func(*args, **kwargs)
-        except AlphaVantageRateLimitError:
-            continue  # Only rate limits trigger fallback
+            result = impl_func(*args, **kwargs)
+
+            # opencli_cn 在非 A 股/中文标的上可能返回“不可用”文本而非抛错；
+            # 这种场景应触发 fallback 到后续 vendor，而不是被当作成功结果。
+            if (
+                vendor == "opencli_cn"
+                and method in {"get_news", "get_global_news"}
+                and isinstance(result, str)
+            ):
+                lowered = result.lower()
+                if (
+                    "opencli_cn could not fetch news" in lowered
+                    or "supports chinese names and mainland a-share tickers only" in lowered
+                ):
+                    last_error = RuntimeError(result)
+                    continue
+
+            save_cached_vendor_result(method, vendor, args, kwargs, result)
+            return result
+        except AlphaVantageRateLimitError as e:
+            # Expected transient error: try next vendor
+            last_error = e
+            continue
+        except Exception as e:
+            # Non-rate-limit vendor failures (e.g., upstream TLS/network/data-source issues)
+            # should also trigger fallback to improve resilience.
+            # If Alpha Vantage key is missing, treat it as a skippable fallback condition
+            # and avoid overriding a more meaningful prior vendor failure.
+            if (
+                vendor == "alpha_vantage"
+                and "ALPHA_VANTAGE_API_KEY" in str(e)
+                and "not set" in str(e)
+            ):
+                if last_error is None:
+                    last_error = e
+                continue
+
+            last_error = e
+            continue
+
+    if last_error is not None:
+        raise RuntimeError(
+            f"No available vendor for '{method}'. Last error: {last_error}"
+        ) from last_error
 
     raise RuntimeError(f"No available vendor for '{method}'")

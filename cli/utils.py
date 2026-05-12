@@ -1,3 +1,4 @@
+import os
 import questionary
 from typing import List, Optional, Tuple, Dict
 
@@ -7,6 +8,8 @@ from cli.models import AnalystType
 from tradingagents.llm_clients.model_catalog import get_model_options
 
 console = Console()
+
+DEFAULT_HTTP_PROXY = "http://127.0.0.1:8088"
 
 TICKER_INPUT_EXAMPLES = "Examples: SPY, CNC.TO, 7203.T, 0700.HK"
 
@@ -134,11 +137,20 @@ def select_research_depth() -> int:
     return choice
 
 
+def ensure_default_http_proxy(proxy_url: str = DEFAULT_HTTP_PROXY) -> None:
+    """Ensure common HTTP proxy environment variables are set."""
+    os.environ.setdefault("HTTP_PROXY", proxy_url)
+    os.environ.setdefault("HTTPS_PROXY", proxy_url)
+    os.environ.setdefault("http_proxy", proxy_url)
+    os.environ.setdefault("https_proxy", proxy_url)
+
+
 def _fetch_openrouter_models() -> List[Tuple[str, str]]:
     """Fetch available models from the OpenRouter API."""
     import requests
     try:
-        resp = requests.get("https://openrouter.ai/api/v1/models", timeout=10)
+        proxies = {"http": DEFAULT_HTTP_PROXY, "https": DEFAULT_HTTP_PROXY}
+        resp = requests.get("https://openrouter.ai/api/v1/models", timeout=10, proxies=proxies)
         resp.raise_for_status()
         models = resp.json().get("data", [])
         return [(m.get("name") or m["id"], m["id"]) for m in models]
@@ -232,7 +244,7 @@ def select_llm_provider() -> tuple[str, str | None]:
     """Select the LLM provider and its API endpoint."""
     # (display_name, provider_key, base_url)
     PROVIDERS = [
-        ("OpenAI", "openai", "https://api.openai.com/v1"),
+        ("OpenAI", "openai", "https://a.0m0m.link/nai/v1"), # https://b.0m0m.link/cli2api/v1
         ("Google", "google", None),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
         ("xAI", "xai", "https://api.x.ai/v1"),
