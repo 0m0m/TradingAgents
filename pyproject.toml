@@ -31,6 +31,8 @@ dependencies = [
     "typing-extensions>=4.14.0",
     "yfinance>=0.2.63",
     "pytest>=9.0.3",
+    "tushare>=1.4.29",
+    "akshare>=1.18.60",
 ]
 
 [project.scripts]

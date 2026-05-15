@@ -13,6 +13,23 @@ from .y_finance import (
 )
 from .yfinance_news import get_news_yfinance, get_global_news_yfinance
 from .opencli_cn_news import get_opencli_cn_news, get_opencli_cn_global_news
+from .market_utils import has_chinese_characters, is_mainland_a_share_ticker
+from .tushare import (
+    get_stock_data as get_tushare_stock,
+    get_fundamentals as get_tushare_fundamentals,
+    get_balance_sheet as get_tushare_balance_sheet,
+    get_cashflow as get_tushare_cashflow,
+    get_income_statement as get_tushare_income_statement,
+)
+from .akshare import (
+    get_stock_data as get_akshare_stock,
+    get_indicators as get_akshare_indicator,
+    get_fundamentals as get_akshare_fundamentals,
+    get_balance_sheet as get_akshare_balance_sheet,
+    get_cashflow as get_akshare_cashflow,
+    get_income_statement as get_akshare_income_statement,
+    get_news as get_akshare_news,
+)
 from .alpha_vantage import (
     get_stock as get_alpha_vantage_stock,
     get_indicator as get_alpha_vantage_indicator,
@@ -65,6 +82,8 @@ TOOLS_CATEGORIES = {
 
 VENDOR_LIST = [
     "opencli_cn",
+    "tushare",
+    "akshare",
     "yfinance",
     "alpha_vantage",
 ]
@@ -73,33 +92,45 @@ VENDOR_LIST = [
 VENDOR_METHODS = {
     # core_stock_apis
     "get_stock_data": {
+        "tushare": get_tushare_stock,
+        "akshare": get_akshare_stock,
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
     },
     # technical_indicators
     "get_indicators": {
+        "akshare": get_akshare_indicator,
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
     },
     # fundamental_data
     "get_fundamentals": {
+        "tushare": get_tushare_fundamentals,
+        "akshare": get_akshare_fundamentals,
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "yfinance": get_yfinance_fundamentals,
     },
     "get_balance_sheet": {
+        "tushare": get_tushare_balance_sheet,
+        "akshare": get_akshare_balance_sheet,
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
     },
     "get_cashflow": {
+        "tushare": get_tushare_cashflow,
+        "akshare": get_akshare_cashflow,
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
     },
     "get_income_statement": {
+        "tushare": get_tushare_income_statement,
+        "akshare": get_akshare_income_statement,
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
     },
     # news_data
     "get_news": {
+        "akshare": get_akshare_news,
         "opencli_cn": get_opencli_cn_news,
         "alpha_vantage": get_alpha_vantage_news,
         "yfinance": get_news_yfinance,
@@ -114,6 +145,17 @@ VENDOR_METHODS = {
         "yfinance": get_yfinance_insider_transactions,
     },
 }
+
+CN_VENDOR_PRIORITY = {
+    "get_stock_data": ["tushare", "akshare"],
+    "get_indicators": ["akshare", "tushare"],
+    "get_fundamentals": ["tushare", "akshare"],
+    "get_balance_sheet": ["tushare", "akshare"],
+    "get_cashflow": ["tushare", "akshare"],
+    "get_income_statement": ["tushare", "akshare"],
+    "get_news": ["akshare", "opencli_cn"],
+}
+
 
 def get_category_for_method(method: str) -> str:
     """Get the category that contains the specified method."""
@@ -137,21 +179,75 @@ def get_vendor(category: str, method: str = None) -> str:
     # Fall back to category-level configuration
     return config.get("data_vendors", {}).get(category, "default")
 
+def _extract_instrument_for_method(method: str, args, kwargs):
+    if method == "get_global_news":
+        return None
+
+    for key in ("symbol", "ticker"):
+        if key in kwargs:
+            return kwargs[key]
+
+    if args:
+        return args[0]
+
+    return None
+
+
+def _ordered_unique(vendors):
+    ordered = []
+    for vendor in vendors:
+        if vendor and vendor not in ordered:
+            ordered.append(vendor)
+    return ordered
+
+
+def _is_cn_instrument_for_method(method: str, instrument) -> bool:
+    if method == "get_news":
+        return is_mainland_a_share_ticker(instrument) or has_chinese_characters(instrument)
+    return is_mainland_a_share_ticker(instrument)
+
+
+def _build_fallback_vendors(method: str, vendor_config: str, args, kwargs):
+    primary_vendors = [v.strip() for v in vendor_config.split(",")]
+    instrument = _extract_instrument_for_method(method, args, kwargs)
+    all_available_vendors = list(VENDOR_METHODS[method].keys())
+
+    if method in CN_VENDOR_PRIORITY and _is_cn_instrument_for_method(method, instrument):
+        return _ordered_unique(CN_VENDOR_PRIORITY[method] + primary_vendors + all_available_vendors)
+
+    overseas_vendors = [vendor for vendor in all_available_vendors if vendor not in {"tushare", "akshare"}]
+    return _ordered_unique(primary_vendors + overseas_vendors)
+
+
+def _prepare_vendor_call_args(method: str, args):
+    if method != "get_global_news":
+        return args
+
+    prepared = list(args)
+    while prepared and prepared[-1] is None:
+        prepared.pop()
+    return tuple(prepared)
+
+
+def _opencli_cn_result_should_fallback(method: str, result: str) -> bool:
+    lowered = result.lower()
+    return (
+        "opencli_cn could not fetch news" in lowered
+        or "supports chinese names and mainland a-share tickers only" in lowered
+        or "no chinese/a-share news found" in lowered
+        or "no chinese financial market news found" in lowered
+    )
+
+
 def route_to_vendor(method: str, *args, **kwargs):
     """Route method calls to appropriate vendor implementation with fallback support."""
     category = get_category_for_method(method)
     vendor_config = get_vendor(category, method)
-    primary_vendors = [v.strip() for v in vendor_config.split(',')]
 
     if method not in VENDOR_METHODS:
         raise ValueError(f"Method '{method}' not supported")
 
-    # Build fallback chain: primary vendors first, then remaining available vendors
-    all_available_vendors = list(VENDOR_METHODS[method].keys())
-    fallback_vendors = primary_vendors.copy()
-    for vendor in all_available_vendors:
-        if vendor not in fallback_vendors:
-            fallback_vendors.append(vendor)
+    fallback_vendors = _build_fallback_vendors(method, vendor_config, args, kwargs)
 
     last_error = None
 
@@ -165,24 +261,21 @@ def route_to_vendor(method: str, *args, **kwargs):
 
         vendor_impl = VENDOR_METHODS[method][vendor]
         impl_func = vendor_impl[0] if isinstance(vendor_impl, list) else vendor_impl
+        call_args = _prepare_vendor_call_args(method, args)
 
         try:
-            result = impl_func(*args, **kwargs)
+            result = impl_func(*call_args, **kwargs)
 
-            # opencli_cn 在非 A 股/中文标的上可能返回“不可用”文本而非抛错；
+            # opencli_cn 在非 A 股/中文标的或无结果时可能返回文本而非抛错；
             # 这种场景应触发 fallback 到后续 vendor，而不是被当作成功结果。
             if (
                 vendor == "opencli_cn"
                 and method in {"get_news", "get_global_news"}
                 and isinstance(result, str)
+                and _opencli_cn_result_should_fallback(method, result)
             ):
-                lowered = result.lower()
-                if (
-                    "opencli_cn could not fetch news" in lowered
-                    or "supports chinese names and mainland a-share tickers only" in lowered
-                ):
-                    last_error = RuntimeError(result)
-                    continue
+                last_error = RuntimeError(result)
+                continue
 
             save_cached_vendor_result(method, vendor, args, kwargs, result)
             return result

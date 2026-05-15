@@ -388,6 +388,11 @@ def test_route_to_vendor_can_call_opencli_cn_news(monkeypatch):
     monkeypatch.setattr(interface, "save_cached_vendor_result", fake_save)
     monkeypatch.setitem(
         interface.VENDOR_METHODS["get_news"],
+        "akshare",
+        lambda ticker, start_date, end_date: (_ for _ in ()).throw(RuntimeError("akshare unavailable")),
+    )
+    monkeypatch.setitem(
+        interface.VENDOR_METHODS["get_news"],
         "opencli_cn",
         lambda ticker, start_date, end_date: f"news for {ticker} from {start_date} to {end_date}",
     )

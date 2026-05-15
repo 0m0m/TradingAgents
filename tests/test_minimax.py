@@ -12,7 +12,10 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from tradingagents.llm_clients.capabilities import is_minimax_reasoning_model
-from tradingagents.llm_clients.openai_client import MinimaxChatOpenAI, OpenAIClient
+from tradingagents.llm_clients.openai_client import (
+    MinimaxChatOpenAI,
+    OpenAIClient,
+)
 
 
 def _client(model: str = "MiniMax-M2.7"):
@@ -38,10 +41,7 @@ class TestMinimaxReasoningSplit:
             [HumanMessage(content="hi")],
             reasoning_split=False,
         )
-        # langchain may or may not surface that kwarg into the payload;
-        # what matters is we don't blindly overwrite a non-default value
-        # the caller passed. setdefault leaves an existing value alone.
-        assert payload.get("reasoning_split") in (False, True)
+        assert payload.get("reasoning_split") is False
 
 
 @pytest.mark.unit
@@ -69,9 +69,9 @@ class TestMinimaxStructuredOutputDispatch:
     def test_schema_still_bound_as_tool(self):
         bound = _client("MiniMax-M2.7").with_structured_output(self._Pick)
         tools = self._bound_kwargs(bound).get("tools", [])
-        assert any(
-            t.get("function", {}).get("name") == "_Pick" for t in tools
-        ), f"schema not bound: {tools}"
+        assert any(t.get("function", {}).get("name") == "_Pick" for t in tools), (
+            f"schema not bound: {tools}"
+        )
 
 
 @pytest.mark.unit
@@ -88,10 +88,10 @@ class TestMinimaxModelDetection:
 
 @pytest.mark.unit
 class TestMinimaxClientSelection:
-    def test_openai_provider_with_minimax_model_injects_reasoning_split(self):
+    def test_minimax_provider_with_minimax_model_injects_reasoning_split(self):
         client = OpenAIClient(
             model="MiniMax-M2.7",
-            provider="openai",
+            provider="minimax",
             api_key="placeholder",
         )
 
@@ -100,3 +100,18 @@ class TestMinimaxClientSelection:
 
         assert isinstance(llm, MinimaxChatOpenAI)
         assert payload.get("reasoning_split") is True
+
+    def test_openai_provider_with_minimax_model_does_not_inject_reasoning_split(self):
+        client = OpenAIClient(
+            model="MiniMax-M2.7",
+            provider="openai",
+            api_key="placeholder",
+            reasoning_effort="high",
+        )
+
+        llm = client.get_llm()
+        payload = llm._get_request_payload([HumanMessage(content="hi")])
+
+        assert not isinstance(llm, MinimaxChatOpenAI)
+        assert "reasoning_split" not in payload
+        assert "reasoning_effort" not in payload

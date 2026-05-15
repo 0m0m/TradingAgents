@@ -13,9 +13,9 @@ config["max_debate_rounds"] = 1  # Increase debate rounds
 
 # Configure data vendors
 config["data_vendors"] = {
-    "core_stock_apis": "yfinance",           # Options: alpha_vantage, yfinance
-    "technical_indicators": "yfinance",      # Options: alpha_vantage, yfinance
-    "fundamental_data": "yfinance",          # Options: alpha_vantage, yfinance
+    "core_stock_apis": "yfinance",           # Options: tushare, akshare, alpha_vantage, yfinance; A-share tickers prefer tushare/akshare automatically
+    "technical_indicators": "yfinance",      # Options: akshare, alpha_vantage, yfinance; A-share tickers prefer akshare/tushare automatically
+    "fundamental_data": "yfinance",          # Options: tushare, akshare, alpha_vantage, yfinance; A-share tickers prefer tushare/akshare automatically
     "news_data": "opencli_cn",               # Options: opencli_cn, alpha_vantage, yfinance
 }
 

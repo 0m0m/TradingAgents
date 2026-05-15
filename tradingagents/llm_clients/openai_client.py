@@ -136,8 +136,13 @@ class MinimaxChatOpenAI(NormalizedChatOpenAI):
 
 # Kwargs forwarded from user config to ChatOpenAI
 _PASSTHROUGH_KWARGS = (
-    "timeout", "max_retries", "reasoning_effort",
-    "api_key", "callbacks", "http_client", "http_async_client",
+    "timeout",
+    "max_retries",
+    "reasoning_effort",
+    "api_key",
+    "callbacks",
+    "http_client",
+    "http_async_client",
 )
 
 # Provider base URLs. API-key env vars live in api_key_env.PROVIDER_API_KEY_ENV
@@ -146,16 +151,16 @@ _PASSTHROUGH_KWARGS = (
 # separate endpoints because international and China accounts cannot share
 # credentials (#758).
 _PROVIDER_BASE_URL = {
-    "xai":        "https://api.x.ai/v1",
-    "deepseek":   "https://api.deepseek.com",
-    "qwen":       "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-    "qwen-cn":    "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "glm":        "https://api.z.ai/api/paas/v4/",
-    "glm-cn":     "https://open.bigmodel.cn/api/paas/v4/",
-    "minimax":    "https://api.minimax.io/v1",
+    "xai": "https://api.x.ai/v1",
+    "deepseek": "https://api.deepseek.com",
+    "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    "qwen-cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "glm": "https://api.z.ai/api/paas/v4/",
+    "glm-cn": "https://open.bigmodel.cn/api/paas/v4/",
+    "minimax": "https://api.minimax.io/v1",
     "minimax-cn": "https://api.minimaxi.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
-    "ollama":     "http://localhost:11434/v1",
+    "ollama": "http://localhost:11434/v1",
 }
 
 
@@ -203,7 +208,9 @@ class OpenAIClient(BaseLLMClient):
         # client (e.g. a corporate proxy) takes precedence over the
         # provider default so users can route through their own gateway.
         if self.provider in _PROVIDER_BASE_URL:
-            llm_kwargs["base_url"] = self.base_url or _resolve_provider_base_url(self.provider)
+            llm_kwargs["base_url"] = self.base_url or _resolve_provider_base_url(
+                self.provider
+            )
             api_key_env = get_api_key_env(self.provider)
             if api_key_env:
                 api_key = os.environ.get(api_key_env)
@@ -231,16 +238,25 @@ class OpenAIClient(BaseLLMClient):
         # convert_request_failed/not implemented.
         if self.provider == "openai":
             model_lower = self.model.lower()
-            use_responses = model_lower.startswith("gpt-5") or model_lower.startswith("gpt-4.1")
+            use_responses = model_lower.startswith("gpt-5") or model_lower.startswith(
+                "gpt-4.1"
+            )
             llm_kwargs["use_responses_api"] = use_responses
 
         model_lower = self.model.lower()
-        is_deepseek_model = model_lower == "deepseek" or model_lower.startswith("deepseek-")
+        is_deepseek_model = model_lower == "deepseek" or model_lower.startswith(
+            "deepseek-"
+        )
         is_minimax_model = is_minimax_reasoning_model(self.model)
+
+        if is_minimax_model and self.provider == "openai":
+            llm_kwargs.pop("reasoning_effort", None)
 
         if self.provider == "deepseek" or is_deepseek_model:
             chat_cls = DeepSeekChatOpenAI
-        elif self.provider in ("minimax", "minimax-cn") or is_minimax_model:
+        elif self.provider in ("minimax", "minimax-cn"):
+            chat_cls = MinimaxChatOpenAI
+        elif is_minimax_model and self.provider != "openai":
             chat_cls = MinimaxChatOpenAI
         else:
             chat_cls = NormalizedChatOpenAI
