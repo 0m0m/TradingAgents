@@ -23,25 +23,24 @@ def _client(model: str = "MiniMax-M2.7"):
     return MinimaxChatOpenAI(
         model=model,
         api_key="placeholder",
-        base_url="https://api.minimax.io/v1",
+        base_url="http://192.168.102.129:3000/v1",
     )
 
 
 @pytest.mark.unit
 class TestMinimaxReasoningSplit:
-    def test_request_payload_sets_reasoning_split(self):
+    def test_request_payload_sets_reasoning_split_in_extra_body(self):
         payload = _client()._get_request_payload([HumanMessage(content="hi")])
-        assert payload.get("reasoning_split") is True
+        assert payload.get("extra_body", {}).get("reasoning_split") is True
+        assert "reasoning_split" not in payload
 
     def test_caller_supplied_reasoning_split_is_preserved(self):
-        """If the user explicitly sets reasoning_split, don't override it
-        (setdefault semantics — caller wins)."""
         client = _client()
         payload = client._get_request_payload(
             [HumanMessage(content="hi")],
-            reasoning_split=False,
+            extra_body={"reasoning_split": False},
         )
-        assert payload.get("reasoning_split") is False
+        assert payload.get("extra_body", {}).get("reasoning_split") is False
 
 
 @pytest.mark.unit
@@ -99,19 +98,20 @@ class TestMinimaxClientSelection:
         payload = llm._get_request_payload([HumanMessage(content="hi")])
 
         assert isinstance(llm, MinimaxChatOpenAI)
-        assert payload.get("reasoning_split") is True
+        assert payload.get("extra_body", {}).get("reasoning_split") is True
 
-    def test_openai_provider_with_minimax_model_does_not_inject_reasoning_split(self):
+    def test_openai_provider_with_minimax_model_routes_to_minimax_cn(self, monkeypatch):
+        monkeypatch.setenv("MINIMAX_CN_API_KEY", "placeholder")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         client = OpenAIClient(
             model="MiniMax-M2.7",
             provider="openai",
-            api_key="placeholder",
             reasoning_effort="high",
         )
 
         llm = client.get_llm()
         payload = llm._get_request_payload([HumanMessage(content="hi")])
 
-        assert not isinstance(llm, MinimaxChatOpenAI)
-        assert "reasoning_split" not in payload
+        assert isinstance(llm, MinimaxChatOpenAI)
+        assert payload.get("extra_body", {}).get("reasoning_split") is True
         assert "reasoning_effort" not in payload

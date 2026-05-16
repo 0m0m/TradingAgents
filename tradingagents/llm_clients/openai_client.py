@@ -130,7 +130,10 @@ class MinimaxChatOpenAI(NormalizedChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        payload.setdefault("reasoning_split", True)
+        extra_body = dict(payload.get("extra_body") or {})
+        extra_body.setdefault("reasoning_split", True)
+        payload["extra_body"] = extra_body
+        payload.pop("reasoning_split", None)
         return payload
 
 
@@ -152,13 +155,13 @@ _PASSTHROUGH_KWARGS = (
 # credentials (#758).
 _PROVIDER_BASE_URL = {
     "xai": "https://api.x.ai/v1",
-    "deepseek": "https://api.deepseek.com",
+    "deepseek": "http://192.168.102.129:3000/v1",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "qwen-cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "glm": "https://api.z.ai/api/paas/v4/",
     "glm-cn": "https://open.bigmodel.cn/api/paas/v4/",
-    "minimax": "https://api.minimax.io/v1",
-    "minimax-cn": "https://api.minimaxi.com/v1",
+    "minimax": "http://192.168.102.129:3000/v1",
+    "minimax-cn": "http://192.168.102.129:3000/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "ollama": "http://localhost:11434/v1",
 }
@@ -198,6 +201,8 @@ class OpenAIClient(BaseLLMClient):
     ):
         super().__init__(model, base_url, **kwargs)
         self.provider = provider.lower()
+        if is_minimax_reasoning_model(model):
+            self.provider = "minimax-cn"
 
     def get_llm(self) -> Any:
         """Return configured ChatOpenAI instance."""
@@ -249,14 +254,12 @@ class OpenAIClient(BaseLLMClient):
         )
         is_minimax_model = is_minimax_reasoning_model(self.model)
 
-        if is_minimax_model and self.provider == "openai":
+        if is_minimax_model:
             llm_kwargs.pop("reasoning_effort", None)
 
         if self.provider == "deepseek" or is_deepseek_model:
             chat_cls = DeepSeekChatOpenAI
         elif self.provider in ("minimax", "minimax-cn"):
-            chat_cls = MinimaxChatOpenAI
-        elif is_minimax_model and self.provider != "openai":
             chat_cls = MinimaxChatOpenAI
         else:
             chat_cls = NormalizedChatOpenAI

@@ -9,23 +9,24 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.spinner import Spinner
 from rich.live import Live
-from rich.columns import Columns
 from rich.markdown import Markdown
 from rich.layout import Layout
 from rich.text import Text
 from rich.table import Table
 from collections import deque
 import time
-from rich.tree import Tree
 from rich import box
-from rich.align import Align
 from rich.rule import Rule
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
+from tradingagents.reporting.summary import (
+    build_error_summary,
+    generate_report_summary,
+    save_summary_artifacts,
+)
 from cli.models import AnalystType
 from cli.utils import *
-from cli.announcements import fetch_announcements, display_announcements
 from cli.stats_handler import StatsCallbackHandler
 
 console = Console()
@@ -493,17 +494,17 @@ def get_user_selections(
     """Get user selections. CLI values take priority, otherwise fall back to interactive prompts."""
 
     provider_url_map = {
-        "openai": "https://a.0m0m.link/nai/v1", # https://b.0m0m.link/cli2api/v1
+        "openai": "https://b.0m0m.link/cli2api/v1", # https://a.0m0m.link/nai https://b.0m0m.link/cli2api/v1
         "google": None,
         "anthropic": "https://api.anthropic.com/",
         "xai": "https://api.x.ai/v1",
-        "deepseek": "https://api.deepseek.com",
+        "deepseek": "http://192.168.102.129:3000/v1",
         "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         "qwen-cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
         "glm": "https://api.z.ai/api/paas/v4/",
         "glm-cn": "https://open.bigmodel.cn/api/paas/v4/",
-        "minimax": "https://api.minimax.io/v1",
-        "minimax-cn": "https://api.minimaxi.com/v1",
+        "minimax": "http://192.168.102.129:3000/v1",
+        "minimax-cn": "http://192.168.102.129:3000/v1",
         "openrouter": "https://openrouter.ai/api/v1",
         "azure": None,
         "ollama": "http://localhost:11434/v1",
@@ -619,7 +620,13 @@ def get_analysis_date():
             )
 
 
-def save_report_to_disk(final_state, ticker: str, save_path: Path, error_context: str | None = None):
+def save_report_to_disk(
+    final_state,
+    ticker: str,
+    save_path: Path,
+    error_context: str | None = None,
+    summary_options: dict[str, object] | None = None,
+):
     """Save complete analysis report to disk with organized subfolders.
 
     When ``error_context`` is provided, append an explicit error section so
@@ -713,12 +720,26 @@ def save_report_to_disk(final_state, ticker: str, save_path: Path, error_context
 
     # Write consolidated report
     header = f"# Trading Analysis Report: {ticker}\n\nGenerated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-    (save_path / "complete_report.md").write_text(header + "\n\n".join(sections), encoding="utf-8")
+    report_path = save_path / "complete_report.md"
+    report_path.write_text(header + "\n\n".join(sections), encoding="utf-8")
 
     if error_context:
         (save_path / "error_context.md").write_text(error_context, encoding="utf-8")
 
-    return save_path / "complete_report.md"
+    if summary_options and summary_options.get("enabled", True):
+        try:
+            summary_payload = generate_report_summary(
+                report_path,
+                provider=str(summary_options["provider"]),
+                model=str(summary_options["model"]),
+                base_url=summary_options.get("base_url"),
+                output_language=str(summary_options.get("output_language", "Chinese")),
+            )
+        except Exception as exc:
+            summary_payload = build_error_summary(str(exc))
+        save_summary_artifacts(save_path, summary_payload)
+
+    return report_path
 
 
 def display_complete_report(final_state):
@@ -1275,7 +1296,20 @@ def run_analysis(
         save_path = Path(save_path_str)
         try:
             error_context = "\n\n".join(error_context_lines) if error_context_lines else None
-            report_file = save_report_to_disk(final_state, selections["ticker"], save_path, error_context)
+            summary_options = {
+                "enabled": config.get("summary_enabled", True),
+                "provider": config.get("summary_provider") or config["llm_provider"],
+                "model": config.get("summary_model") or config["quick_think_llm"],
+                "base_url": config.get("summary_backend_url") or config.get("backend_url"),
+                "output_language": config.get("output_language", "Chinese"),
+            }
+            report_file = save_report_to_disk(
+                final_state,
+                selections["ticker"],
+                save_path,
+                error_context,
+                summary_options,
+            )
             console.print(f"\n[green]✓ Report saved to:[/green] {save_path.resolve()}")
             console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
         except Exception as e:

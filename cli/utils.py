@@ -255,10 +255,10 @@ def select_llm_provider() -> tuple[str, str | None]:
         ("Google", "google", None),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
         ("xAI", "xai", "https://api.x.ai/v1"),
-        ("DeepSeek", "deepseek", "https://api.deepseek.com"),
+        ("DeepSeek", "deepseek", "http://192.168.102.129:3000/v1"),
         ("Qwen", "qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         ("GLM", "glm", "https://open.bigmodel.cn/api/paas/v4/"),
-        ("MiniMax", "minimax", "https://api.minimax.io/v1"),
+        ("MiniMax", "minimax", "http://192.168.102.129:3000/v1"),
         ("OpenRouter", "openrouter", "https://openrouter.ai/api/v1"),
         ("Azure OpenAI", "azure", None),
         ("Ollama", "ollama", ollama_url),
@@ -413,11 +413,11 @@ def ask_minimax_region() -> tuple[str, str]:
         choices=[
             questionary.Choice(
                 "Global — api.minimax.io (uses MINIMAX_API_KEY)",
-                value=("minimax", "https://api.minimax.io/v1"),
+                value=("minimax", "http://192.168.102.129:3000/v1"),
             ),
             questionary.Choice(
                 "China — api.minimaxi.com (uses MINIMAX_CN_API_KEY)",
-                value=("minimax-cn", "https://api.minimaxi.com/v1"),
+                value=("minimax-cn", "http://192.168.102.129:3000/v1"),
             ),
         ],
         style=questionary.Style([

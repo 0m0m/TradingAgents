@@ -60,7 +60,7 @@ class TestDeepSeekReasoningContent:
         return DeepSeekChatOpenAI(
             model="deepseek-v4-flash",
             api_key="placeholder",
-            base_url="https://api.deepseek.com",
+            base_url="http://192.168.102.129:3000/v1",
         )
 
     def test_capture_on_receive(self):
@@ -139,7 +139,7 @@ class TestStructuredOutputCapabilityDispatch:
 
     def _client(self, model):
         return DeepSeekChatOpenAI(
-            model=model, api_key="placeholder", base_url="https://api.deepseek.com",
+            model=model, api_key="placeholder", base_url="http://192.168.102.129:3000/v1",
         )
 
     def test_chat_sends_tool_choice(self):
@@ -211,7 +211,7 @@ class TestDeepSeekLiveStructuredOutput:
         client = DeepSeekChatOpenAI(
             model="deepseek-v4-flash",
             api_key=os.environ["DEEPSEEK_API_KEY"],
-            base_url="https://api.deepseek.com",
+            base_url="http://192.168.102.129:3000/v1",
             timeout=60,
         )
         bound = client.with_structured_output(self._Pick)

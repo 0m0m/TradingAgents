@@ -24,6 +24,10 @@ def test_no_env_uses_built_in_defaults(monkeypatch):
     assert dc.DEFAULT_CONFIG["deep_think_llm"] == "gpt-5.5"
     assert dc.DEFAULT_CONFIG["quick_think_llm"] == "gpt-5.4-mini"
     assert dc.DEFAULT_CONFIG["backend_url"] is None
+    assert dc.DEFAULT_CONFIG["summary_enabled"] is True
+    assert dc.DEFAULT_CONFIG["summary_provider"] is None
+    assert dc.DEFAULT_CONFIG["summary_model"] is None
+    assert dc.DEFAULT_CONFIG["summary_backend_url"] is None
     assert dc.DEFAULT_CONFIG["max_debate_rounds"] == 1
     assert dc.DEFAULT_CONFIG["checkpoint_enabled"] is False
 
@@ -36,12 +40,20 @@ def test_string_overrides(monkeypatch):
         TRADINGAGENTS_QUICK_THINK_LLM="gemini-3-flash-preview",
         TRADINGAGENTS_LLM_BACKEND_URL="https://example.invalid/v1",
         TRADINGAGENTS_OUTPUT_LANGUAGE="Chinese",
+        TRADINGAGENTS_SUMMARY_PROVIDER="minimax-cn",
+        TRADINGAGENTS_SUMMARY_MODEL="MiniMax-M2.7",
+        TRADINGAGENTS_SUMMARY_BACKEND_URL="https://summary.example.invalid/v1",
     )
     assert dc.DEFAULT_CONFIG["llm_provider"] == "google"
     assert dc.DEFAULT_CONFIG["deep_think_llm"] == "gemini-3-pro-preview"
     assert dc.DEFAULT_CONFIG["quick_think_llm"] == "gemini-3-flash-preview"
     assert dc.DEFAULT_CONFIG["backend_url"] == "https://example.invalid/v1"
     assert dc.DEFAULT_CONFIG["output_language"] == "Chinese"
+    assert dc.DEFAULT_CONFIG["summary_provider"] == "minimax-cn"
+    assert dc.DEFAULT_CONFIG["summary_model"] == "MiniMax-M2.7"
+    assert (
+        dc.DEFAULT_CONFIG["summary_backend_url"] == "https://summary.example.invalid/v1"
+    )
 
 
 def test_int_coercion(monkeypatch):
@@ -59,13 +71,35 @@ def test_int_coercion(monkeypatch):
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("true", True), ("True", True), ("1", True), ("yes", True), ("on", True),
-        ("false", False), ("False", False), ("0", False), ("no", False), ("off", False),
+        ("true", True),
+        ("True", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        ("false", False),
+        ("False", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
     ],
 )
 def test_bool_coercion(monkeypatch, raw, expected):
     dc = _reload_with_env(monkeypatch, TRADINGAGENTS_CHECKPOINT_ENABLED=raw)
     assert dc.DEFAULT_CONFIG["checkpoint_enabled"] is expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("true", True),
+        ("False", False),
+        ("0", False),
+        ("yes", True),
+    ],
+)
+def test_summary_enabled_bool_coercion(monkeypatch, raw, expected):
+    dc = _reload_with_env(monkeypatch, TRADINGAGENTS_SUMMARY_ENABLED=raw)
+    assert dc.DEFAULT_CONFIG["summary_enabled"] is expected
 
 
 def test_empty_env_value_is_passthrough(monkeypatch):
