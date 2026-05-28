@@ -92,13 +92,15 @@ class ResearchPlan(BaseModel):
 
 def render_research_plan(plan: ResearchPlan) -> str:
     """Render a ResearchPlan to markdown for storage and the trader's prompt context."""
-    return "\n".join([
-        f"**Recommendation**: {plan.recommendation.value}",
-        "",
-        f"**Rationale**: {plan.rationale}",
-        "",
-        f"**Strategic Actions**: {plan.strategic_actions}",
-    ])
+    return "\n".join(
+        [
+            f"**Recommendation**: {plan.recommendation.value}",
+            "",
+            f"**Rationale**: {plan.rationale}",
+            "",
+            f"**Strategic Actions**: {plan.strategic_actions}",
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -156,10 +158,12 @@ def render_trader_proposal(proposal: TraderProposal) -> str:
         parts.extend(["", f"**Stop Loss**: {proposal.stop_loss}"])
     if proposal.position_sizing:
         parts.extend(["", f"**Position Sizing**: {proposal.position_sizing}"])
-    parts.extend([
-        "",
-        f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
-    ])
+    parts.extend(
+        [
+            "",
+            f"FINAL TRANSACTION PROPOSAL: **{proposal.action.value.upper()}**",
+        ]
+    )
     return "\n".join(parts)
 
 

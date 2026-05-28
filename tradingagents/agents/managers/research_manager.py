@@ -11,6 +11,7 @@ from tradingagents.agents.utils.structured import (
     bind_structured,
     invoke_structured_or_freetext,
 )
+from tradingagents.agents.utils.prompts import render_prompt
 
 
 def create_research_manager(llm):
@@ -22,27 +23,12 @@ def create_research_manager(llm):
 
         investment_debate_state = state["investment_debate_state"]
 
-        prompt = f"""As the Research Manager and debate facilitator, your role is to critically evaluate this round of debate and deliver a clear, actionable investment plan for the trader.
-
-{instrument_context}
-
----
-
-**Rating Scale** (use exactly one):
-- **Buy**: Strong conviction in the bull thesis; recommend taking or growing the position
-- **Overweight**: Constructive view; recommend gradually increasing exposure
-- **Hold**: Balanced view; recommend maintaining the current position
-- **Underweight**: Cautious view; recommend trimming exposure
-- **Sell**: Strong conviction in the bear thesis; recommend exiting or avoiding the position
-
-Commit to a clear stance whenever the debate's strongest arguments warrant one; reserve Hold for situations where the evidence on both sides is genuinely balanced.
-
----
-
-**Debate History:**
-{history}
-
-{get_language_instruction()}"""
+        prompt = render_prompt(
+            "managers/research_manager.md",
+            instrument_context=instrument_context,
+            history=history,
+            language_instruction=get_language_instruction(),
+        )
 
         investment_plan = invoke_structured_or_freetext(
             structured_llm,

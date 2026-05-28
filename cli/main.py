@@ -494,7 +494,7 @@ def get_user_selections(
     """Get user selections. CLI values take priority, otherwise fall back to interactive prompts."""
 
     provider_url_map = {
-        "openai": "https://b.0m0m.link/cli2api/v1", # https://a.0m0m.link/nai https://b.0m0m.link/cli2api/v1
+        "openai": "http://192.168.102.129:3000/v1", # https://a.0m0m.link/nai https://b.0m0m.link/cli2api/v1
         "google": None,
         "anthropic": "https://api.anthropic.com/",
         "xai": "https://api.x.ai/v1",

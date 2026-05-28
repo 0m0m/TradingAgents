@@ -9,6 +9,8 @@ import subprocess
 from datetime import datetime, timedelta
 from typing import Any
 
+from .cls_news import ClsNewsError, get_cls_kuaixun_records
+
 _CN_NAME_RE = re.compile(r"^[一-鿿A-Za-z0-9·（）()\-\s]+$")
 _A_SHARE_RE = re.compile(r"^(?P<digits>\d{6})(?:\.(?P<suffix>SS|SH|SZ|BJ))?$", re.IGNORECASE)
 
@@ -41,6 +43,14 @@ def get_opencli_cn_news(ticker: str, start_date: str, end_date: str) -> str:
 
     if not records:
         try:
+            cls_records = get_cls_kuaixun_records(limit=50)
+            cls_records = _filter_records_by_ticker(cls_records, aliases)
+            records.extend(_filter_records_by_date(cls_records, start_date, end_date))
+        except ClsNewsError:
+            pass
+
+    if not records:
+        try:
             eastmoney_payload = _run_opencli_json(["eastmoney", "kuaixun", "--limit", "50"])
             eastmoney_records = _records_from_payload(eastmoney_payload, "eastmoney_kuaixun")
             eastmoney_records = _filter_records_by_ticker(eastmoney_records, aliases)
@@ -55,6 +65,7 @@ def get_opencli_cn_news(ticker: str, start_date: str, end_date: str) -> str:
         "Tried sources:\n"
         "- sinafinance stock\n"
         "- sinafinance news\n"
+        "- cls kuaixun\n"
         "- eastmoney kuaixun"
     )
     return _format_records(records, heading, empty_message)
@@ -62,27 +73,37 @@ def get_opencli_cn_news(ticker: str, start_date: str, end_date: str) -> str:
 
 def get_opencli_cn_global_news(curr_date: str, look_back_days: int = 7, limit: int = 10) -> str:
     safe_limit = max(1, min(int(limit), 50))
+    start_date = (datetime.strptime(curr_date, "%Y-%m-%d") - timedelta(days=look_back_days)).strftime("%Y-%m-%d")
     records: list[dict[str, Any]] = []
 
     try:
-        sina_payload = _run_opencli_json(["sinafinance", "news", "--limit", str(safe_limit), "--type", "1"])
-        records.extend(_records_from_payload(sina_payload, "sinafinance"))
-    except _OpenCliError:
+        cls_records = get_cls_kuaixun_records(limit=safe_limit)
+        records.extend(_filter_records_by_date(cls_records, start_date, curr_date))
+    except ClsNewsError:
         pass
 
     if not records:
         try:
-            eastmoney_payload = _run_opencli_json(["eastmoney", "kuaixun", "--limit", str(safe_limit)])
-            records.extend(_records_from_payload(eastmoney_payload, "eastmoney_kuaixun"))
+            sina_payload = _run_opencli_json(["sinafinance", "news", "--limit", str(safe_limit), "--type", "1"])
+            sina_records = _records_from_payload(sina_payload, "sinafinance")
+            records.extend(_filter_records_by_date(sina_records, start_date, curr_date))
         except _OpenCliError:
             pass
 
-    start_date = (datetime.strptime(curr_date, "%Y-%m-%d") - timedelta(days=look_back_days)).strftime("%Y-%m-%d")
-    records = _filter_records_by_date(_dedupe_records(records), start_date, curr_date)[:safe_limit]
+    if not records:
+        try:
+            eastmoney_payload = _run_opencli_json(["eastmoney", "kuaixun", "--limit", str(safe_limit)])
+            eastmoney_records = _records_from_payload(eastmoney_payload, "eastmoney_kuaixun")
+            records.extend(_filter_records_by_date(eastmoney_records, start_date, curr_date))
+        except _OpenCliError:
+            pass
+
+    records = _dedupe_records(records)[:safe_limit]
     heading = f"## Chinese Financial Market News, from {start_date} to {curr_date}:"
     empty_message = (
         f"No Chinese financial market news found from opencli_cn for {curr_date}.\n\n"
         "Tried sources:\n"
+        "- cls kuaixun\n"
         "- sinafinance news\n"
         "- eastmoney kuaixun"
     )

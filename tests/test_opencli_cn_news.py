@@ -1,9 +1,16 @@
 import json
 import subprocess
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
+from tradingagents.dataflows.cls_news import (
+    ClsNewsError,
+    _cls_canonical_query,
+    _cls_sign,
+    _fetch_cls_roll_list,
+    _normalize_cls_roll_record,
+)
 from tradingagents.dataflows.opencli_cn_news import (
     _OpenCliError,
     _dedupe_records,
@@ -18,7 +25,21 @@ from tradingagents.dataflows.opencli_cn_news import (
 )
 
 
-@pytest.mark.unit
+def test_cls_sign_matches_site_algorithm_sample():
+    params = {
+        "app": "CailianpressWeb",
+        "category": "telegraph",
+        "last_time": 1779982777,
+        "os": "web",
+        "refresh_type": 1,
+        "rn": 20,
+        "sv": "8.4.6",
+    }
+
+    assert _cls_canonical_query(params) == "app=CailianpressWeb&category=telegraph&last_time=1779982777&os=web&refresh_type=1&rn=20&sv=8.4.6"
+    assert _cls_sign(params) == "f22aa3113f9a5073232356911bb564b8"
+
+
 @pytest.mark.parametrize(
     ("symbol", "digits", "exchange", "sina_query", "aliases"),
     [
@@ -64,7 +85,35 @@ def test_normalize_cn_ticker_rejects_non_cn_ticker():
     }
 
 
-def test_run_opencli_json_uses_shell_false_and_json_format():
+def test_fetch_cls_roll_list_adds_sign_and_parses_roll_data():
+    payload = {"errno": 0, "msg": "", "data": {"roll_data": [{"id": 1, "content": "新闻"}]}}
+    response = Mock()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=None)
+    response.read.return_value = json.dumps(payload).encode("utf-8")
+
+    with patch("tradingagents.dataflows.cls_news.urlopen", return_value=response) as open_url:
+        result = _fetch_cls_roll_list(limit=500, last_time=1779982777)
+
+    assert result == [{"id": 1, "content": "新闻"}]
+    url = open_url.call_args.args[0].full_url
+    assert "rn=50" in url
+    assert "last_time=1779982777" in url
+    assert "sign=" in url
+
+
+def test_fetch_cls_roll_list_raises_on_api_error():
+    payload = {"errno": "10012", "msg": "签名错误"}
+    response = Mock()
+    response.__enter__ = Mock(return_value=response)
+    response.__exit__ = Mock(return_value=None)
+    response.read.return_value = json.dumps(payload).encode("utf-8")
+
+    with patch("tradingagents.dataflows.cls_news.urlopen", return_value=response):
+        with pytest.raises(ClsNewsError, match="签名错误"):
+            _fetch_cls_roll_list(limit=20, last_time=1779982777)
+
+
     completed = subprocess.CompletedProcess(
         args=["opencli"],
         returncode=0,
@@ -117,7 +166,27 @@ def test_run_opencli_json_raises_on_invalid_json():
             _run_opencli_json(["sinafinance", "news"])
 
 
-def test_normalize_record_accepts_common_field_names():
+def test_normalize_cls_roll_record_maps_common_fields():
+    record = _normalize_cls_roll_record(
+        {
+            "id": 2384160,
+            "ctime": 1779953960,
+            "brief": "财联社5月28日电，广期所品种仓单及变化如下。",
+            "content": "财联社5月28日电，广期所品种仓单及变化如下。",
+            "stocks": [{"secu_code": "SH600118"}],
+        }
+    )
+
+    assert record == {
+        "title": "财联社5月28日电，广期所品种仓单及变化如下。",
+        "summary": "",
+        "time": "2026-05-28 15:39:20",
+        "source": "cls_kuaixun",
+        "url": "https://www.cls.cn/detail/2384160",
+        "stocks": ["SH600118"],
+    }
+
+
     record = _normalize_record(
         {
             "time": "2026-05-08 09:30:00",
@@ -258,6 +327,41 @@ def test_get_opencli_cn_news_uses_sinafinance_stock_as_name_lookup_before_news_f
     assert "无关新闻" not in result
 
 
+def test_get_opencli_cn_news_uses_cls_kuaixun_before_eastmoney_when_sina_empty():
+    cls_payload = [
+        {
+            "title": "中国卫星获财联社关注",
+            "summary": "财联社快讯提及中国卫星订单进展。",
+            "time": "2026-05-08 09:45:00",
+            "source": "cls_kuaixun",
+            "url": "https://www.cls.cn/detail/1",
+            "stocks": ["SH600118"],
+        },
+        {
+            "title": "无关板块消息",
+            "summary": "消费板块走强。",
+            "time": "2026-05-08 09:46:00",
+            "source": "cls_kuaixun",
+            "url": "https://www.cls.cn/detail/2",
+            "stocks": ["SH600600"],
+        },
+    ]
+
+    with patch("tradingagents.dataflows.opencli_cn_news._run_opencli_json", side_effect=[[], []]) as run, patch(
+        "tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records",
+        return_value=cls_payload,
+    ) as cls_records:
+        result = get_opencli_cn_news("600118.SS", "2026-05-01", "2026-05-08")
+
+    assert run.call_args_list[0].args[0] == ["sinafinance", "stock", "600118"]
+    assert run.call_args_list[1].args[0] == ["sinafinance", "news", "--limit", "50", "--type", "1"]
+    cls_records.assert_called_once_with(limit=50)
+    assert "中国卫星获财联社关注" in result
+    assert "无关板块消息" not in result
+    assert "cls_kuaixun" in result
+
+
+
 def test_get_opencli_cn_news_falls_back_to_eastmoney_kuaixun_when_sina_empty():
     eastmoney_payload = [
         {
@@ -277,7 +381,7 @@ def test_get_opencli_cn_news_falls_back_to_eastmoney_kuaixun_when_sina_empty():
     with patch(
         "tradingagents.dataflows.opencli_cn_news._run_opencli_json",
         side_effect=[[], [], eastmoney_payload],
-    ) as run:
+    ) as run, patch("tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records", return_value=[]):
         result = get_opencli_cn_news("600118.SS", "2026-05-01", "2026-05-08")
 
     assert run.call_args_list[0].args[0] == ["sinafinance", "stock", "600118"]
@@ -305,7 +409,59 @@ def test_get_opencli_cn_news_returns_empty_message_when_sources_fail():
     assert "No Chinese/A-share news found for 600118.SS" in result
     assert "sinafinance stock" in result
     assert "sinafinance news" in result
+    assert "cls kuaixun" in result
     assert "eastmoney kuaixun" in result
+
+
+def test_get_opencli_cn_global_news_uses_cls_kuaixun_first():
+    cls_payload = [
+        {
+            "title": "财联社：A股三大指数震荡",
+            "summary": "市场成交活跃。",
+            "time": "2026-05-08 11:00:00",
+            "source": "cls_kuaixun",
+            "url": "https://www.cls.cn/detail/1",
+            "stocks": [],
+        }
+    ]
+
+    with patch("tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records", return_value=cls_payload) as cls_records:
+        result = get_opencli_cn_global_news("2026-05-08", look_back_days=7, limit=5)
+
+    cls_records.assert_called_once_with(limit=5)
+    assert "Chinese Financial Market News" in result
+    assert "财联社：A股三大指数震荡" in result
+    assert "cls_kuaixun" in result
+
+def test_get_opencli_cn_global_news_uses_sinafinance_when_cls_records_are_out_of_range():
+    cls_payload = [
+        {
+            "title": "财联社：最新市场消息",
+            "summary": "当前快讯不属于历史分析日期。",
+            "time": "2026-05-28 11:00:00",
+            "source": "cls_kuaixun",
+            "url": "https://www.cls.cn/detail/1",
+            "stocks": [],
+        }
+    ]
+    sina_payload = [
+        {
+            "time": "2026-05-08 11:00:00",
+            "title": "A股三大指数震荡",
+            "summary": "市场成交活跃。",
+        }
+    ]
+
+    with patch("tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records", return_value=cls_payload), patch(
+        "tradingagents.dataflows.opencli_cn_news._run_opencli_json",
+        return_value=sina_payload,
+    ) as run:
+        result = get_opencli_cn_global_news("2026-05-08", look_back_days=7, limit=5)
+
+    run.assert_called_once_with(["sinafinance", "news", "--limit", "5", "--type", "1"])
+    assert "A股三大指数震荡" in result
+    assert "财联社：最新市场消息" not in result
+
 
 
 def test_get_opencli_cn_global_news_uses_sinafinance_news():
@@ -317,7 +473,10 @@ def test_get_opencli_cn_global_news_uses_sinafinance_news():
         }
     ]
 
-    with patch("tradingagents.dataflows.opencli_cn_news._run_opencli_json", return_value=sina_payload) as run:
+    with patch("tradingagents.dataflows.opencli_cn_news._run_opencli_json", return_value=sina_payload) as run, patch(
+        "tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records",
+        return_value=[],
+    ):
         result = get_opencli_cn_global_news("2026-05-08", look_back_days=7, limit=5)
 
     run.assert_called_once_with(["sinafinance", "news", "--limit", "5", "--type", "1"])
@@ -338,7 +497,7 @@ def test_get_opencli_cn_global_news_falls_back_to_eastmoney_kuaixun():
     with patch(
         "tradingagents.dataflows.opencli_cn_news._run_opencli_json",
         side_effect=[[], eastmoney_payload],
-    ) as run:
+    ) as run, patch("tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records", return_value=[]):
         result = get_opencli_cn_global_news("2026-05-08", look_back_days=7, limit=5)
 
     assert run.call_args_list[0].args[0] == ["sinafinance", "news", "--limit", "5", "--type", "1"]
@@ -348,9 +507,13 @@ def test_get_opencli_cn_global_news_falls_back_to_eastmoney_kuaixun():
 
 
 def test_get_opencli_cn_global_news_clamps_limit():
-    with patch("tradingagents.dataflows.opencli_cn_news._run_opencli_json", return_value=[]) as run:
+    with patch("tradingagents.dataflows.opencli_cn_news._run_opencli_json", return_value=[]) as run, patch(
+        "tradingagents.dataflows.opencli_cn_news.get_cls_kuaixun_records",
+        return_value=[],
+    ) as cls_records:
         get_opencli_cn_global_news("2026-05-08", look_back_days=7, limit=500)
 
+    cls_records.assert_called_once_with(limit=50)
     assert run.call_args_list[0].args[0] == ["sinafinance", "news", "--limit", "50", "--type", "1"]
 
 
