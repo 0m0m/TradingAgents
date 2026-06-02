@@ -13,6 +13,14 @@ def create_bear_researcher(llm):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
+        instrument_context = get_instrument_context_from_state(state)
+        asset_type = state.get("asset_type", "stock")
+        target_label = "stock" if asset_type == "stock" else "asset"
+        fundamentals_label = (
+            "Company fundamentals report"
+            if asset_type == "stock"
+            else "Asset fundamentals report (may be unavailable for crypto)"
+        )
 
         prompt = render_prompt(
             "researchers/bear.md",

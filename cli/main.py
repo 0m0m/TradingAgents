@@ -1,4 +1,5 @@
 from typing import Optional
+import os
 import datetime
 import logging
 import typer
@@ -19,6 +20,12 @@ from rich import box
 from rich.rule import Rule
 
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.graph.analyst_execution import (
+    AnalystWallTimeTracker,
+    build_analyst_execution_plan,
+    get_initial_analyst_node,
+    sync_analyst_tracker_from_chunk,
+)
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.reporting.summary import (
     build_error_summary,
@@ -578,29 +585,6 @@ def get_user_selections(
     }
 
 
-def get_ticker():
-    """Get ticker symbol from user input, preserving exchange suffixes."""
-    # typer.prompt strips trailing dot-suffixes on some shells (e.g. 000404.SH
-    # collapses to 000404). questionary.text reads the raw line.
-    ticker = questionary.text(
-        "",
-        validate=lambda value: (
-            not value.strip()
-            or (
-                all(ch.isalnum() or ch in "._-^" for ch in value.strip())
-                and len(value.strip()) <= 32
-            )
-        )
-        or "Please enter a valid ticker symbol, e.g. AAPL, 000404.SZ, 0700.HK.",
-    ).ask()
-
-    if ticker is None:
-        console.print("\n[red]No ticker symbol provided. Exiting...[/red]")
-        raise typer.Exit(1)
-
-    return (ticker.strip() or "SPY").upper()
-
-
 def get_analysis_date():
     """Get the analysis date from user input."""
     while True:
@@ -826,7 +810,7 @@ ANALYST_REPORT_MAP = {
 }
 
 
-def update_analyst_statuses(message_buffer, chunk):
+def update_analyst_statuses(message_buffer, chunk, wall_time_tracker=None):
     """Update analyst statuses based on accumulated report state.
 
     Logic:
@@ -839,6 +823,9 @@ def update_analyst_statuses(message_buffer, chunk):
     """
     selected = message_buffer.selected_analysts
     found_active = False
+
+    if wall_time_tracker is not None:
+        sync_analyst_tracker_from_chunk(wall_time_tracker, chunk)
 
     for analyst_key in ANALYST_ORDER:
         if analyst_key not in selected:
@@ -994,6 +981,11 @@ def run_analysis(
     # Normalize analyst selection to predefined order (selection is a 'set', order is fixed)
     selected_set = {analyst.value for analyst in selections["analysts"]}
     selected_analyst_keys = [a for a in ANALYST_ORDER if a in selected_set]
+    analyst_execution_plan = build_analyst_execution_plan(
+        selected_analyst_keys,
+        concurrency_limit=config["analyst_concurrency_limit"],
+    )
+    analyst_wall_time_tracker = AnalystWallTimeTracker(analyst_execution_plan)
 
     # Initialize the graph with callbacks bound to LLMs
     graph = TradingAgentsGraph(
@@ -1102,6 +1094,8 @@ def run_analysis(
 
         # Add initial messages
         message_buffer.add_message("System", f"Selected ticker: {selections['ticker']}")
+        if selections["asset_type"] != "stock":
+            message_buffer.add_message("System", f"Detected asset type: {selections['asset_type']}")
         message_buffer.add_message(
             "System", f"Analysis date: {selections['analysis_date']}"
         )
@@ -1112,8 +1106,9 @@ def run_analysis(
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
         # Update agent status to in_progress for the first analyst
-        first_analyst = f"{selections['analysts'][0].value.capitalize()} Analyst"
+        first_analyst = get_initial_analyst_node(analyst_execution_plan)
         message_buffer.update_agent_status(first_analyst, "in_progress")
+        analyst_wall_time_tracker.mark_started(selected_analyst_keys[0])
         update_display(layout, stats_handler=stats_handler, start_time=start_time)
 
         # Create spinner text
@@ -1122,9 +1117,18 @@ def run_analysis(
         )
         update_display(layout, spinner_text, stats_handler=stats_handler, start_time=start_time)
 
-        # Initialize state and get graph args with callbacks
+        # Initialize state and get graph args with callbacks.
+        # Resolve the instrument identity once here so all agents anchor to
+        # the real company (#814); the CLI builds state directly rather than
+        # going through propagate(), so this must happen on the CLI path too.
+        instrument_context = graph.resolve_instrument_context(
+            selections["ticker"], selections["asset_type"]
+        )
         init_agent_state = graph.propagator.create_initial_state(
-            selections["ticker"], selections["analysis_date"]
+            selections["ticker"],
+            selections["analysis_date"],
+            asset_type=selections["asset_type"],
+            instrument_context=instrument_context,
         )
         # Pass callbacks to graph config for tool execution tracking
         # (LLM tracking is handled separately via LLM constructor)
@@ -1273,6 +1277,7 @@ def run_analysis(
         message_buffer.add_message(
             "System", f"Completed analysis for {selections['analysis_date']}"
         )
+        message_buffer.add_message("System", analyst_wall_time_tracker.format_summary())
 
         # Update final report sections
         for section in message_buffer.report_sections.keys():
@@ -1283,6 +1288,7 @@ def run_analysis(
 
     # Post-analysis prompts (outside Live context for clean interaction)
     console.print("\n[bold cyan]Analysis Complete![/bold cyan]\n")
+    console.print(f"[dim]{analyst_wall_time_tracker.format_summary()}[/dim]")
 
     # Prompt to save report
     save_choice = typer.prompt("Save report?", default="Y").strip().upper()

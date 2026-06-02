@@ -251,6 +251,8 @@ def route_to_vendor(method: str, *args, **kwargs):
 
     last_error = None
 
+    last_no_data: NoMarketDataError | None = None
+    first_error: Exception | None = None
     for vendor in fallback_vendors:
         if vendor not in VENDOR_METHODS[method]:
             continue
