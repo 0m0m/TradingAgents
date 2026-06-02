@@ -13,6 +13,8 @@ CSV_COLUMNS = [
     "run_id",
     "analysis_date",
     "ticker",
+    "ticker_name",
+    "ticker_pinyin_abbr",
     "shallow_model",
     "deep_model",
     "report_dir",

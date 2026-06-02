@@ -74,5 +74,21 @@ class TestPromptTemplates:
 
         assert _placeholders(chinese) == _placeholders(english)
 
+    def test_sentiment_prompt_includes_cn_social_block_in_all_languages(self):
+        for language in (None, "Chinese"):
+            prompt = load_prompt("analysts/sentiment.md", language=language)
+            assert "{cn_social_block}" in prompt
+            assert "start_of_cn_social" in prompt
+            assert "end_of_cn_social" in prompt
+
+            if language == "Chinese":
+                assert "国内社区与热度信号" in prompt
+                assert "雪球" in prompt
+                assert "同花顺" in prompt
+            else:
+                assert "domestic community and attention signals" in prompt
+                assert "Xueqiu" in prompt
+                assert "Tonghuashun" in prompt
+
     def test_unknown_language_falls_back_to_english_prompt(self):
         assert load_prompt("trader/system.md", language="fr-FR") == load_prompt("trader/system.md")

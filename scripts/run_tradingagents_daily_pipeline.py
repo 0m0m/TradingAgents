@@ -50,10 +50,9 @@ def _artifacts_dir(
     safe_analysis_date = run_module.safe_analysis_date(analysis_date)
     return (
         repo_root
-        / "docs"
-        / "tradingagents"
-        / "artifacts"
+        / "reports"
         / safe_analysis_date
+        / "artifacts"
         / safe_ticker
         / run_id
     )
@@ -163,7 +162,7 @@ def run_tradingagents_daily_pipeline(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument("--repo-root", default=str(SCRIPT_DIR.parent))
     parser.add_argument("--ticker", required=True)
     parser.add_argument("--analysis-date", default=date.today().isoformat())
     parser.add_argument(
@@ -185,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     csv_path = (
         Path(args.csv_path)
         if args.csv_path
-        else repo_root / "docs" / "tradingagents" / "daily_ticker_analysis.csv"
+        else repo_root / "reports" / args.analysis_date / "daily_ticker_analysis.csv"
     )
     payload = run_tradingagents_daily_pipeline(
         repo_root=repo_root,

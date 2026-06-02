@@ -48,6 +48,8 @@ def build_summary_row(
         "run_id": _stringify(discovery_payload.get("run_id")),
         "analysis_date": _stringify(run_payload.get("analysis_date")),
         "ticker": _stringify(run_payload.get("ticker")),
+        "ticker_name": _stringify(run_payload.get("ticker_name")),
+        "ticker_pinyin_abbr": _stringify(run_payload.get("ticker_pinyin_abbr")),
         "shallow_model": _stringify(run_payload.get("shallow_model")),
         "deep_model": _stringify(run_payload.get("deep_model")),
         "report_dir": _stringify(discovery_payload.get("report_dir")),

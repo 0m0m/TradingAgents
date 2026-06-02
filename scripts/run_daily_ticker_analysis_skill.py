@@ -12,13 +12,16 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_SHALLOW_THINKER = "MiniMax-M2.7"
-DEFAULT_DEEP_THINKER = "gpt-5.5"
+DEFAULT_DEEP_THINKER = "MiniMax-M2.7"
 ARTIFACT_FILENAMES = [
     "run.json",
     "discovery.json",
     "summary.json",
     "finalize_result.json",
 ]
+DEFAULT_CONFIG = None
+TradingAgentsGraph = None
+save_report_to_disk = None
 
 
 def _load_module(module_name: str):
@@ -65,10 +68,15 @@ def normalize_tickers(positionals: list[str], ticker_args: list[str]) -> list[st
 def latest_artifacts_dir(
     repo_root: Path, analysis_date: str, ticker: str
 ) -> Path | None:
-    root = repo_root / "docs" / "tradingagents" / "artifacts" / analysis_date / ticker
-    if not root.exists():
+    preferred_root = repo_root / "reports" / analysis_date / "artifacts" / ticker
+    if preferred_root.exists():
+        candidates = sorted(path for path in preferred_root.iterdir() if path.is_dir())
+        return candidates[-1] if candidates else None
+
+    legacy_root = repo_root / "docs" / "tradingagents" / "artifacts" / analysis_date / ticker
+    if not legacy_root.exists():
         return None
-    candidates = sorted(path for path in root.iterdir() if path.is_dir())
+    candidates = sorted(path for path in legacy_root.iterdir() if path.is_dir())
     return candidates[-1] if candidates else None
 
 
@@ -164,6 +172,7 @@ def repair_finalize_if_possible(
     markdown_path: Path,
     artifacts_dir: str,
     error: str = "",
+    write_artifact_result: bool = True,
 ) -> dict[str, Any] | None:
     if not artifacts_dir:
         return None
@@ -186,11 +195,196 @@ def repair_finalize_if_possible(
         replace=True,
         markdown_path=markdown_path,
     )
-    finalize_result_path = root / "finalize_result.json"
-    finalize_result_path.write_text(
-        json.dumps(_jsonable(payload), ensure_ascii=False), encoding="utf-8"
-    )
+    if write_artifact_result:
+        finalize_result_path = root / "finalize_result.json"
+        finalize_result_path.write_text(
+            json.dumps(_jsonable(payload), ensure_ascii=False), encoding="utf-8"
+        )
     return payload
+
+
+def _default_config() -> dict[str, Any]:
+    global DEFAULT_CONFIG
+    if DEFAULT_CONFIG is None:
+        from tradingagents.default_config import DEFAULT_CONFIG as loaded_config
+
+        DEFAULT_CONFIG = loaded_config
+    return DEFAULT_CONFIG
+
+
+def _trading_graph_class():
+    global TradingAgentsGraph
+    if TradingAgentsGraph is None:
+        from tradingagents.graph.trading_graph import TradingAgentsGraph as loaded_graph
+
+        TradingAgentsGraph = loaded_graph
+    return TradingAgentsGraph
+
+
+def _save_report_to_disk(final_state, ticker: str, save_path: Path, summary_options: dict[str, object]):
+    global save_report_to_disk
+    if save_report_to_disk is None:
+        from cli.main import save_report_to_disk as loaded_save_report_to_disk
+
+        save_report_to_disk = loaded_save_report_to_disk
+    return save_report_to_disk(final_state, ticker, save_path, None, summary_options)
+
+
+def load_report_markdown(report_dir: Path, relative_path: str) -> str:
+    path = report_dir / relative_path
+    if not path.exists():
+        raise FileNotFoundError(f"required report markdown missing: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _refresh_config(
+    shallow_model: str,
+    deep_model: str,
+    output_language: str,
+    summary_model: str | None,
+) -> dict[str, Any]:
+    config = _default_config().copy()
+    config["quick_think_llm"] = shallow_model
+    config["deep_think_llm"] = deep_model
+    config["output_language"] = output_language
+    if summary_model:
+        config["summary_model"] = summary_model
+    return config
+
+
+def _summary_options(config: dict[str, Any]) -> dict[str, object]:
+    return {
+        "enabled": config.get("summary_enabled", True),
+        "provider": config.get("summary_provider") or config["llm_provider"],
+        "model": config.get("summary_model") or config["quick_think_llm"],
+        "base_url": config.get("summary_backend_url") or config.get("backend_url"),
+        "output_language": config.get("output_language", "Chinese"),
+    }
+
+
+def run_sentiment_downstream_refresh(
+    repo_root: Path,
+    ticker: str,
+    analysis_date: str,
+    shallow_model: str,
+    deep_model: str,
+    output_language: str,
+    summary_model: str | None,
+    csv_path: Path,
+    markdown_path: Path,
+) -> dict[str, Any]:
+    artifacts_dir = latest_artifacts_dir(repo_root, analysis_date, ticker)
+    if artifacts_dir is None:
+        raise FileNotFoundError(f"artifacts_dir not found for {ticker} {analysis_date}")
+
+    discovery_payload = _read_json(artifacts_dir / "discovery.json")
+    report_dir = Path(str(discovery_payload["report_dir"]))
+    report_path = Path(str(discovery_payload["report_path"]))
+    old_reports = {
+        "market_report": load_report_markdown(report_dir, "1_analysts/market.md"),
+        "news_report": load_report_markdown(report_dir, "1_analysts/news.md"),
+        "fundamentals_report": load_report_markdown(report_dir, "1_analysts/fundamentals.md"),
+    }
+
+    config = _refresh_config(
+        shallow_model=shallow_model,
+        deep_model=deep_model,
+        output_language=output_language,
+        summary_model=summary_model,
+    )
+    graph = _trading_graph_class()(selected_analysts=["social"], config=config)
+    initial_state = graph.propagator.create_initial_state(ticker, analysis_date, past_context="")
+    initial_state.update(old_reports)
+    final_state = graph.graph.invoke(initial_state, **graph.propagator.get_graph_args())
+    final_state.update(old_reports)
+
+    saved_report_path = _save_report_to_disk(
+        final_state=final_state,
+        ticker=ticker,
+        save_path=report_dir,
+        summary_options=_summary_options(config),
+    )
+    report_summary_path = report_dir / "summary.json"
+    if not report_summary_path.exists():
+        raise FileNotFoundError(f"summary.json not generated: {report_summary_path}")
+    (artifacts_dir / "summary.json").write_text(
+        report_summary_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    finalize_payload = repair_finalize_if_possible(
+        csv_path=csv_path,
+        markdown_path=markdown_path,
+        artifacts_dir=str(artifacts_dir),
+        write_artifact_result=True,
+    ) or {}
+
+    return {
+        "ticker": ticker,
+        "status": "completed",
+        "run_id": str(discovery_payload.get("run_id", artifacts_dir.name)),
+        "report_path": str(report_path if report_path.exists() else saved_report_path),
+        "artifacts_dir": str(artifacts_dir),
+        "csv_status": finalize_payload.get("status", ""),
+        "markdown_path": str(finalize_payload.get("markdown_path", "")),
+        "html_path": str(finalize_payload.get("html_path", "")),
+        "failed_stage": "",
+        "error": "",
+    }
+
+
+def root_report_paths(
+    repo_root: Path,
+    root_csv_path: str | None,
+    root_markdown_path: str | None,
+) -> tuple[Path, Path]:
+    root_csv = (
+        Path(root_csv_path)
+        if root_csv_path
+        else repo_root / "reports" / "daily_ticker_analysis.csv"
+    )
+    root_markdown = Path(root_markdown_path) if root_markdown_path else root_csv.with_suffix(".md")
+    return root_csv, root_markdown
+
+
+def is_same_path(left: Path, right: Path) -> bool:
+    return left.resolve() == right.resolve()
+
+
+def sync_root_report_from_verifications(
+    root_csv_path: Path,
+    root_markdown_path: Path,
+    verifications: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for verification in verifications:
+        ticker = str(verification.get("ticker", ""))
+        payload = repair_finalize_if_possible(
+            csv_path=root_csv_path,
+            markdown_path=root_markdown_path,
+            artifacts_dir=str(verification.get("artifacts_dir", "")),
+            write_artifact_result=False,
+        )
+        if payload is None:
+            results.append(
+                {
+                    "ticker": ticker,
+                    "status": "skipped_missing_artifacts",
+                    "csv_path": str(root_csv_path),
+                    "markdown_path": str(root_markdown_path),
+                    "html_path": str(root_markdown_path.with_suffix(".html")),
+                }
+            )
+            continue
+        results.append(
+            {
+                "ticker": ticker,
+                "status": payload.get("status", ""),
+                "csv_path": payload.get("csv_path", str(root_csv_path)),
+                "markdown_path": payload.get("markdown_path", str(root_markdown_path)),
+                "html_path": payload.get("html_path", str(root_markdown_path.with_suffix(".html"))),
+                "row_count": payload.get("row_count", 0),
+            }
+        )
+    return results
 
 
 def recover_saved_report(
@@ -317,6 +511,27 @@ def run_one_ticker(
         return {"ticker": ticker, "status": "failed", "error": error}
 
 
+def _run_parallel(
+    tickers: list[str],
+    max_concurrency: int,
+    worker,
+) -> list[dict[str, Any]]:
+    results_by_ticker: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
+        futures = {executor.submit(worker, ticker): ticker for ticker in tickers}
+        for future in as_completed(futures):
+            ticker = futures[future]
+            try:
+                results_by_ticker[ticker] = future.result()
+            except Exception as exc:
+                results_by_ticker[ticker] = {
+                    "ticker": ticker,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+    return [results_by_ticker[ticker] for ticker in tickers]
+
+
 def run_batch(
     tickers: list[str],
     repo_root: Path,
@@ -329,34 +544,48 @@ def run_batch(
     markdown_path: Path,
     max_concurrency: int,
 ) -> list[dict[str, Any]]:
-    results_by_ticker: dict[str, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=max_concurrency) as executor:
-        futures = {
-            executor.submit(
-                run_one_ticker,
-                repo_root,
-                ticker,
-                analysis_date,
-                shallow_model,
-                deep_model,
-                output_language,
-                summary_model,
-                csv_path,
-                markdown_path,
-            ): ticker
-            for ticker in tickers
-        }
-        for future in as_completed(futures):
-            ticker = futures[future]
-            try:
-                results_by_ticker[ticker] = future.result()
-            except Exception as exc:
-                results_by_ticker[ticker] = {
-                    "ticker": ticker,
-                    "status": "failed",
-                    "error": str(exc),
-                }
-    return [results_by_ticker[ticker] for ticker in tickers]
+    def worker(ticker: str) -> dict[str, Any]:
+        return run_one_ticker(
+            repo_root=repo_root,
+            ticker=ticker,
+            analysis_date=analysis_date,
+            shallow_model=shallow_model,
+            deep_model=deep_model,
+            output_language=output_language,
+            summary_model=summary_model,
+            csv_path=csv_path,
+            markdown_path=markdown_path,
+        )
+
+    return _run_parallel(tickers, max_concurrency, worker)
+
+
+def refresh_batch(
+    tickers: list[str],
+    repo_root: Path,
+    analysis_date: str,
+    shallow_model: str,
+    deep_model: str,
+    output_language: str,
+    summary_model: str | None,
+    csv_path: Path,
+    markdown_path: Path,
+    max_concurrency: int,
+) -> list[dict[str, Any]]:
+    def worker(ticker: str) -> dict[str, Any]:
+        return run_sentiment_downstream_refresh(
+            repo_root=repo_root,
+            ticker=ticker,
+            analysis_date=analysis_date,
+            shallow_model=shallow_model,
+            deep_model=deep_model,
+            output_language=output_language,
+            summary_model=summary_model,
+            csv_path=csv_path,
+            markdown_path=markdown_path,
+        )
+
+    return _run_parallel(tickers, max_concurrency, worker)
 
 
 def build_final_payload(
@@ -407,7 +636,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("tickers", nargs="*")
     parser.add_argument("--ticker", action="append", default=[])
-    parser.add_argument("--repo-root", default="D:/Tools/m1")
+    parser.add_argument("--repo-root", default=str(SCRIPT_DIR.parent))
     parser.add_argument("--analysis-date", default=date.today().isoformat())
     parser.add_argument(
         "--shallow-thinker", dest="shallow_model", default=DEFAULT_SHALLOW_THINKER
@@ -419,23 +648,37 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--summary-model")
     parser.add_argument("--csv-path")
     parser.add_argument("--markdown-path")
+    parser.add_argument("--root-csv-path")
+    parser.add_argument("--root-markdown-path")
+    parser.add_argument(
+        "--no-sync-root",
+        action="store_true",
+        help="do not sync finalized date-level rows to reports/daily_ticker_analysis.*",
+    )
     parser.add_argument("--max-concurrency", type=int, default=2)
     parser.add_argument(
         "--verify-only",
         action="store_true",
         help="only verify existing CSV, Markdown, reports, logs, and artifacts",
     )
+    parser.add_argument(
+        "--refresh-sentiment-downstream-only",
+        action="store_true",
+        help="reuse existing market/news/fundamentals reports and rerun sentiment plus downstream reports",
+    )
     args = parser.parse_args(argv)
 
     if args.max_concurrency < 1:
         raise ValueError("--max-concurrency must be >= 1")
+    if args.refresh_sentiment_downstream_only and args.verify_only:
+        raise ValueError("--refresh-sentiment-downstream-only cannot be combined with --verify-only")
 
     tickers = normalize_tickers(args.tickers, args.ticker)
     repo_root = Path(args.repo_root)
     csv_path = (
         Path(args.csv_path)
         if args.csv_path
-        else repo_root / "docs" / "tradingagents" / "daily_ticker_analysis.csv"
+        else repo_root / "reports" / args.analysis_date / "daily_ticker_analysis.csv"
     )
     markdown_path = (
         Path(args.markdown_path) if args.markdown_path else csv_path.with_suffix(".md")
@@ -446,6 +689,19 @@ def main(argv: list[str] | None = None) -> int:
             {"ticker": ticker, "status": "verified_existing", "error": ""}
             for ticker in tickers
         ]
+    elif args.refresh_sentiment_downstream_only:
+        run_results = refresh_batch(
+            tickers=tickers,
+            repo_root=repo_root,
+            analysis_date=args.analysis_date,
+            shallow_model=args.shallow_model,
+            deep_model=args.deep_model,
+            output_language=args.output_language,
+            summary_model=args.summary_model,
+            csv_path=csv_path,
+            markdown_path=markdown_path,
+            max_concurrency=args.max_concurrency,
+        )
     else:
         run_results = run_batch(
             tickers=tickers,
@@ -492,7 +748,27 @@ def main(argv: list[str] | None = None) -> int:
             )
         verifications.append(verification)
 
+    root_csv_path, root_markdown_path = root_report_paths(
+        repo_root=repo_root,
+        root_csv_path=args.root_csv_path,
+        root_markdown_path=args.root_markdown_path,
+    )
+
+    root_sync: list[dict[str, Any]] = []
+    should_sync_root = (
+        not args.verify_only
+        and not args.no_sync_root
+        and not is_same_path(csv_path, root_csv_path)
+    )
+    if should_sync_root:
+        root_sync = sync_root_report_from_verifications(
+            root_csv_path=root_csv_path,
+            root_markdown_path=root_markdown_path,
+            verifications=verifications,
+        )
+
     payload = build_final_payload(run_results, verifications)
+    payload["root_sync"] = root_sync
     print(json.dumps(_jsonable(payload), ensure_ascii=False, indent=2))
     return 0 if payload["evidence_sufficiency"] == "sufficient" else 1
 

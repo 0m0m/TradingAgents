@@ -2,9 +2,28 @@ from __future__ import annotations
 
 import argparse
 import csv
+import importlib.util
 import json
 import os
 from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+
+
+def _load_module(module_name: str):
+    module_path = SCRIPT_DIR / f"{module_name}.py"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"failed to load module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _ticker_display(row: dict[str, str]) -> str:
+    display_module = _load_module("ticker_display")
+    return display_module.ticker_display(row)
 
 
 SUMMARY_SECTIONS = [
@@ -96,7 +115,7 @@ def render_markdown(csv_path: Path, markdown_path: Path) -> dict[str, object]:
             + " | ".join(
                 [
                     _escape_cell(row.get("analysis_date", "")),
-                    _escape_cell(row.get("ticker", "")),
+                    _escape_cell(_ticker_display(row)),
                     _escape_cell(row.get("final_action", "")),
                     _escape_cell(row.get("direction", "")),
                     _escape_cell(row.get("confidence", "")),
@@ -113,7 +132,7 @@ def render_markdown(csv_path: Path, markdown_path: Path) -> dict[str, object]:
             part
             for part in [
                 row.get("analysis_date", ""),
-                row.get("ticker", ""),
+                _ticker_display(row),
                 row.get("final_action", ""),
             ]
             if part

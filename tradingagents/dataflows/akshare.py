@@ -97,8 +97,34 @@ def _indicator_description(indicator: str) -> str:
 def get_fundamentals(ticker: str, curr_date: str = None) -> str:
     ak = _require_akshare()
     symbol = _ak_symbol(ticker)
-    data = ak.stock_individual_info_em(symbol=symbol)
-    return _format_dataframe(data, f"AKShare fundamentals for {ticker.upper()}")
+    try:
+        data = ak.stock_individual_info_em(symbol=symbol)
+        return _format_dataframe(data, f"AKShare fundamentals for {ticker.upper()}")
+    except Exception:
+        data = ak.stock_financial_abstract_new_ths(symbol=symbol)
+        data = _recent_financial_abstract(data, curr_date)
+        return _format_dataframe(data, f"AKShare financial abstract for {ticker.upper()}")
+
+
+def _recent_financial_abstract(data: pd.DataFrame, curr_date: str | None) -> pd.DataFrame:
+    if data.empty or "report_date" not in data.columns:
+        return data
+
+    filtered = data.copy()
+    report_dates = pd.to_datetime(filtered["report_date"], errors="coerce")
+    if curr_date:
+        cutoff = pd.to_datetime(curr_date, errors="coerce")
+        if not pd.isna(cutoff):
+            filtered = filtered[report_dates <= cutoff].copy()
+            report_dates = pd.to_datetime(filtered["report_date"], errors="coerce")
+
+    latest_dates = sorted(report_dates.dropna().unique(), reverse=True)[:4]
+    if not latest_dates:
+        return filtered
+
+    filtered = filtered[report_dates.isin(latest_dates)].copy()
+    filtered["report_date"] = pd.to_datetime(filtered["report_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return filtered
 
 
 def get_news(ticker: str, start_date: str, end_date: str) -> str:

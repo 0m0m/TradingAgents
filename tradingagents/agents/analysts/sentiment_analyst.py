@@ -5,13 +5,15 @@ the old version had a prompt that demanded social-media analysis but the
 only tool available was Yahoo Finance news — which led LLMs to fabricate
 Reddit/X/StockTwits content under prompt pressure (verified live).
 
-The redesigned agent pre-fetches three complementary data sources before
+The redesigned agent pre-fetches complementary data sources before
 the LLM is invoked and injects them into the prompt as structured blocks:
 
-  1. News headlines     — Yahoo Finance (institutional framing)
-  2. StockTwits messages — retail-trader posts indexed by cashtag, with
+  1. News headlines      — vendor-routed company news
+  2. Chinese community   — Eastmoney Guba, Xueqiu hot signals, and
+                           Tonghuashun availability status for A-shares
+  3. StockTwits messages — retail-trader posts indexed by cashtag, with
                            user-labeled Bullish/Bearish sentiment tags
-  3. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
+  4. Reddit posts        — r/wallstreetbets, r/stocks, r/investing
 
 The agent does not use tool-calling; the data is in the prompt from
 turn 0. The LLM produces the sentiment report in a single invocation.
@@ -28,8 +30,12 @@ from tradingagents.agents.utils.agent_utils import (
     get_news,
 )
 from tradingagents.agents.utils.prompts import render_prompt
+from tradingagents.dataflows.eastmoney_guba import fetch_eastmoney_guba_posts
+from tradingagents.dataflows.market_utils import has_chinese_characters, is_mainland_a_share_ticker
 from tradingagents.dataflows.reddit import fetch_reddit_posts
 from tradingagents.dataflows.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.tonghuashun_community import fetch_tonghuashun_community_posts
+from tradingagents.dataflows.xueqiu import fetch_xueqiu_hot_signals
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -52,20 +58,16 @@ def create_sentiment_analyst(llm):
         start_date = _seven_days_back(end_date)
         instrument_context = build_instrument_context(ticker)
 
-        # Pre-fetch all three sources. Each fetcher degrades gracefully and
-        # returns a string (no exceptions surface from here), so the LLM
-        # always sees something — either real data or a clear placeholder.
-        news_block = get_news.func(ticker, start_date, end_date)
-        stocktwits_block = fetch_stocktwits_messages(ticker, limit=30)
-        reddit_block = fetch_reddit_posts(ticker)
+        blocks = _prefetch_sentiment_blocks(ticker, start_date, end_date)
 
         system_message = _build_system_message(
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
-            news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
+            news_block=blocks["news_block"],
+            cn_social_block=blocks["cn_social_block"],
+            stocktwits_block=blocks["stocktwits_block"],
+            reddit_block=blocks["reddit_block"],
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -99,12 +101,41 @@ def create_sentiment_analyst(llm):
     return sentiment_analyst_node
 
 
+def _prefetch_sentiment_blocks(ticker: str, start_date: str, end_date: str) -> dict[str, str]:
+    news_block = get_news.func(ticker, start_date, end_date)
+    if is_mainland_a_share_ticker(ticker) or has_chinese_characters(ticker):
+        return {
+            "news_block": news_block,
+            "cn_social_block": _build_cn_social_block(ticker),
+            "stocktwits_block": "<StockTwits skipped for mainland A-share; use Chinese domestic community and attention blocks>",
+            "reddit_block": "<Reddit skipped for mainland A-share; use Chinese domestic community and attention blocks>",
+        }
+
+    return {
+        "news_block": news_block,
+        "cn_social_block": f"<Chinese domestic community source not applicable for {ticker}>",
+        "stocktwits_block": fetch_stocktwits_messages(ticker, limit=30),
+        "reddit_block": fetch_reddit_posts(ticker),
+    }
+
+
+def _build_cn_social_block(ticker: str) -> str:
+    return "\n\n".join(
+        [
+            fetch_eastmoney_guba_posts(ticker, limit=30),
+            fetch_xueqiu_hot_signals(ticker),
+            fetch_tonghuashun_community_posts(ticker, limit=30),
+        ]
+    )
+
+
 def _build_system_message(
     *,
     ticker: str,
     start_date: str,
     end_date: str,
     news_block: str,
+    cn_social_block: str,
     stocktwits_block: str,
     reddit_block: str,
 ) -> str:
@@ -115,6 +146,7 @@ def _build_system_message(
         start_date=start_date,
         end_date=end_date,
         news_block=news_block,
+        cn_social_block=cn_social_block,
         stocktwits_block=stocktwits_block,
         reddit_block=reddit_block,
         language_instruction=get_language_instruction(),

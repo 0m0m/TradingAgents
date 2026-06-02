@@ -126,7 +126,7 @@ def run_tradingagents_daily(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo-root", default=str(Path(__file__).resolve().parents[2]))
+    parser.add_argument("--repo-root", default=str(TRADINGAGENTS_REPO_ROOT))
     parser.add_argument("--ticker", required=True)
     parser.add_argument("--analysis-date", default=date.today().isoformat())
     parser.add_argument(
