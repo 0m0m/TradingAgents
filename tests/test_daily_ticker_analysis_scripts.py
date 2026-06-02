@@ -981,7 +981,7 @@ def test_render_html_links_windows_absolute_report_path(tmp_path: Path):
     html_content = html_path.read_text(encoding="utf-8")
 
     assert '>报告</a>' in html_content
-    assert 'D:/Tools/TradingAgents/reports/2026-05-28/000001.SZ_20260528_090000/complete_report.md' in html_content
+    assert '~/Tools/TradingAgents/reports/2026-05-28/000001.SZ_20260528_090000/complete_report.md' in html_content
 
 
     html_module = _load_script("render_tradingagents_daily_html")

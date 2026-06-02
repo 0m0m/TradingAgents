@@ -57,7 +57,7 @@ def test_resolver_does_not_affect_other_providers(monkeypatch):
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://elsewhere/v1")
     mod = _reload_client()
     assert mod._resolve_provider_base_url("xai") == "https://api.x.ai/v1"
-    assert mod._resolve_provider_base_url("deepseek") == "http://192.168.102.129:3000/v1"
+    assert mod._resolve_provider_base_url("deepseek") == "http://127.0.0.1:3000/v1"
 
 
 def test_client_get_llm_picks_up_env(monkeypatch):

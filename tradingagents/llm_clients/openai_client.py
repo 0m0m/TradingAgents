@@ -161,13 +161,13 @@ _PASSTHROUGH_KWARGS = (
 # credentials (#758).
 _PROVIDER_BASE_URL = {
     "xai": "https://api.x.ai/v1",
-    "deepseek": "http://192.168.102.129:3000/v1",
+    "deepseek": "http://127.0.0.1:3000/v1",
     "qwen": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     "qwen-cn": "https://dashscope.aliyuncs.com/compatible-mode/v1",
     "glm": "https://api.z.ai/api/paas/v4/",
     "glm-cn": "https://open.bigmodel.cn/api/paas/v4/",
-    "minimax": "http://192.168.102.129:3000/v1",
-    "minimax-cn": "http://192.168.102.129:3000/v1",
+    "minimax": "http://127.0.0.1:3000/v1",
+    "minimax-cn": "http://127.0.0.1:3000/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "ollama": "http://localhost:11434/v1",
 }

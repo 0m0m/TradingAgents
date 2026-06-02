@@ -23,7 +23,7 @@ def _client(model: str = "MiniMax-M2.7"):
     return MinimaxChatOpenAI(
         model=model,
         api_key="placeholder",
-        base_url="http://192.168.102.129:3000/v1",
+        base_url="http://127.0.0.1:3000/v1",
     )
 
 

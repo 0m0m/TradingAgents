@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_TRADINGAGENTS_ROOT = Path("D:/tools/TradingAgents")
+DEFAULT_TRADINGAGENTS_ROOT = Path("~/tools/TradingAgents")
 DEFAULT_SUMMARY_PROVIDER = "openai"
-DEFAULT_OPENAI_BACKEND_URL = "https://a.0m0m.link/nai/v1"
+DEFAULT_OPENAI_BACKEND_URL = "http://127.0.0.1:3000/v1"
 MINIMAX_CN_PROVIDER = "minimax-cn"
 
 

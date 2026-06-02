@@ -291,14 +291,14 @@ def _llm_provider_table() -> list[tuple[str, str, str | None]]:
     ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
     # (display_name, provider_key, base_url)
     PROVIDERS = [
-        ("OpenAI", "openai", "https://a.0m0m.link/nai/v1"), # https://b.0m0m.link/cli2api/v1
+        ("OpenAI", "openai", "http://127.0.0.1:3000/v1"), # https://a.0m0m.link/nai/v1 https://b.0m0m.link/cli2api/v1
         ("Google", "google", None),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
         ("xAI", "xai", "https://api.x.ai/v1"),
-        ("DeepSeek", "deepseek", "http://192.168.102.129:3000/v1"),
+        ("DeepSeek", "deepseek", "http://127.0.0.1:3000/v1"),
         ("Qwen", "qwen", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         ("GLM", "glm", "https://open.bigmodel.cn/api/paas/v4/"),
-        ("MiniMax", "minimax", "http://192.168.102.129:3000/v1"),
+        ("MiniMax", "minimax", "http://127.0.0.1:3000/v1"),
         ("OpenRouter", "openrouter", "https://openrouter.ai/api/v1"),
         ("Azure OpenAI", "azure", None),
         ("Ollama", "ollama", ollama_url),
@@ -467,11 +467,11 @@ def ask_minimax_region() -> tuple[str, str]:
         choices=[
             questionary.Choice(
                 "Global — api.minimax.io (uses MINIMAX_API_KEY)",
-                value=("minimax", "http://192.168.102.129:3000/v1"),
+                value=("minimax", "http://127.0.0.1:3000/v1"),
             ),
             questionary.Choice(
                 "China — api.minimaxi.com (uses MINIMAX_CN_API_KEY)",
-                value=("minimax-cn", "http://192.168.102.129:3000/v1"),
+                value=("minimax-cn", "http://127.0.0.1:3000/v1"),
             ),
         ],
         style=questionary.Style([
